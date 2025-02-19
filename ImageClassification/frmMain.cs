@@ -2,16 +2,21 @@
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
 using Directory = System.IO.Directory;
+using IniParser;
+using IniParser.Model;
 
 namespace ImageClassification
 {
     public partial class frmMain : Form
     {
-        private const string _targetRoot = "D:\\A_ImageClassification";
+        private static string _targetRoot = "D:\\A_ImageClassification";
         private readonly ListBox _logBox;
         private readonly ProgressBar _progressBar;
         private readonly Label _progressLabel;
         private readonly ManualResetEventSlim _processingEvent = new(true);
+        private ConfigManager _configManager = null;
+
+        private string _configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.ini");
 
         // 目標存放目錄
         private int _totalFiles = 0;
@@ -25,6 +30,8 @@ namespace ImageClassification
         public frmMain()
         {
             InitializeComponent();
+            _configManager = new ConfigManager("config.ini");
+            _targetRoot = _configManager.GetOutputPath();
             this.Text = "SD 卡自動分類器";
             this.Width = 600;
             this.Height = 450;
@@ -322,5 +329,47 @@ namespace ImageClassification
                 _logBox.SelectedIndex = _logBox.Items.Count - 1;
             }
         }
+    }
+}
+
+public class ConfigManager
+{
+    private readonly string _configFile;
+    private readonly FileIniDataParser _parser;
+    private IniData _data;
+
+    public ConfigManager(string configFile)
+    {
+        _configFile = configFile;
+        _parser = new FileIniDataParser();
+
+        if (!File.Exists(_configFile))
+        {
+            // 建立預設設定
+            _data = new IniData();
+            _data["Settings"]["OutputPath"] = "D:\\A_ImageClassification";
+            Save();
+        }
+        else
+        {
+            // 讀取設定檔
+            _data = _parser.ReadFile(_configFile);
+        }
+    }
+
+    public string GetOutputPath()
+    {
+        return _data["Settings"]["OutputPath"];
+    }
+
+    public void SetOutputPath(string path)
+    {
+        _data["Settings"]["OutputPath"] = path;
+        Save();
+    }
+
+    public void Save()
+    {
+        _parser.WriteFile(_configFile, _data);
     }
 }
