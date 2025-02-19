@@ -1,0 +1,326 @@
+﻿using System.Management;
+using MetadataExtractor;
+using MetadataExtractor.Formats.Exif;
+using Directory = System.IO.Directory;
+
+namespace ImageClassification
+{
+    public partial class frmMain : Form
+    {
+        private const string _targetRoot = "D:\\A_ImageClassification";
+        private readonly ListBox _logBox;
+        private readonly ProgressBar _progressBar;
+        private readonly Label _progressLabel;
+        private readonly ManualResetEventSlim _processingEvent = new(true);
+
+        // 目標存放目錄
+        private int _totalFiles = 0;
+
+        private int _processedFiles = 0;
+
+        // 事件初始為可執行狀態
+        private (string Make, string Model, string Date) lastJpgExifInfo = ("Unknown", "Unknown", "Unknown");
+
+        // 設定程式視窗屬性與初始化控制項
+        public frmMain()
+        {
+            InitializeComponent();
+            this.Text = "SD 卡自動分類器";
+            this.Width = 600;
+            this.Height = 450;
+
+            // 設定日誌顯示區域
+            _logBox = new ListBox() { Dock = DockStyle.Top, Height = 300 };
+            _progressBar = new ProgressBar() { Dock = DockStyle.Top, Height = 30 };
+            _progressLabel = new Label() { Dock = DockStyle.Top, Height = 20, TextAlign = ContentAlignment.MiddleCenter };
+
+            // 將控制項添加到表單中
+            this.Controls.Add(_progressLabel);
+            this.Controls.Add(_progressBar);
+            this.Controls.Add(_logBox);
+
+            // 啟動磁碟機監控
+            StartDriveWatcher();
+        }
+
+        // 開始監聽磁碟插入事件
+        private void StartDriveWatcher()
+        {
+            // 在背景執行緒中運行磁碟監控
+            Task.Run(() =>
+            {
+                // 使用 ManagementEventWatcher 監聽磁碟插入事件
+                var watcher = new ManagementEventWatcher(
+                    new WqlEventQuery("SELECT * FROM Win32_VolumeChangeEvent WHERE EventType = 2"));
+                watcher.EventArrived += new EventArrivedEventHandler(OnVolumeInserted);
+                watcher.Start();
+                Log("正在監聽磁碟機插入...");
+
+                // 保持監控持續運行直到程式結束
+                while (true)
+                {
+                    Thread.Sleep(100); // 避免高 CPU 使用率
+                }
+            });
+        }
+
+        // 當新磁碟機插入時觸發
+        private void OnVolumeInserted(object sender, EventArrivedEventArgs e)
+        {
+            var driveLetter = e.NewEvent["DriveName"]?.ToString();
+            if (string.IsNullOrEmpty(driveLetter))
+            {
+                return;
+            }
+
+            Log($"偵測到新磁碟機: {driveLetter}");
+
+            // **檢查是否正在處理其他磁碟，避免多次觸發**
+            if (!_processingEvent.IsSet)
+            {
+                Log($"目前正在處理其他磁碟，跳過 {driveLetter}。");
+                return;
+            }
+
+            // **阻擋後續的磁碟偵測**
+            _processingEvent.Reset();
+
+            // **開啟新執行緒處理磁碟內容 (避免UI卡住)**
+            Task.Factory.StartNew(() => ProcessDrive(driveLetter), TaskCreationOptions.LongRunning);
+        }
+
+        // 開啟指定資料夾
+        private void OpenFolder(string folderPath)
+        {
+            try
+            {
+                // 使用 explorer 開啟指定資料夾
+                System.Diagnostics.Process.Start("explorer.exe", folderPath);
+            }
+            catch (Exception ex)
+            {
+                Log($"無法開啟資料夾: {ex.Message}");
+            }
+        }
+
+        // 處理偵測到的磁碟
+        private async void ProcessDrive(string driveLetter)
+        {
+            var dcimPath = Path.Combine(driveLetter, "DCIM");
+            if (!Directory.Exists(dcimPath))
+            {
+                Log("未找到 DCIM 資料夾，跳過。");
+                _processingEvent.Set(); // 允許下一次偵測
+                return;
+            }
+
+            // **確保磁碟仍然存在**
+            if (!Directory.Exists(driveLetter))
+            {
+                Log("磁碟已被移除，停止處理。");
+                _processingEvent.Set();
+                return;
+            }
+
+            // 取得所有檔案並根據副檔名排序
+            var files = Directory.GetFiles(dcimPath, "*.*", SearchOption.AllDirectories)
+                                 .OrderBy(f => Path.GetExtension(f).ToLower())  // 根據檔案副檔名排序
+                                 .ToList();
+
+            _totalFiles = files.Count;
+            _processedFiles = 0;
+
+            UpdateProgress(0); // 初始化進度條
+
+            // 開始處理檔案時將進度更新轉交到UI執行緒
+            var tasks = new List<Task>();
+            foreach (var file in files)
+            {
+                if (!Directory.Exists(driveLetter))
+                {
+                    Log("磁碟已被移除，中止處理！");
+                    _processingEvent.Set();
+                    return;
+                }
+
+                tasks.Add(file.ToLower().EndsWith(".jpg") ?
+                              Task.Run(() => ProcessJpeg(file, driveLetter)) :
+                              Task.Run(() => ProcessOtherFile(file, driveLetter)));
+            }
+
+            try
+            {
+                await Task.WhenAll(tasks).ConfigureAwait(false); // 使用 ConfigureAwait(false) 防止回到 UI 執行緒
+            }
+            catch (Exception ex)
+            {
+                Log($"發生錯誤: {ex.Message}");
+            }
+            finally
+            {
+                Log("所有檔案處理完成！");
+                UpdateProgress(100); // 進度條填滿
+                OpenFolder(_targetRoot); // 開啟目標資料夾
+                _processingEvent.Set(); // 允許下一次偵測
+            }
+        }
+
+        // 處理 JPG 檔案，並根據 EXIF 資訊分類
+        private void ProcessJpeg(string filePath, string driveLetter)
+        {
+            try
+            {
+                if (!Directory.Exists(driveLetter))
+                {
+                    Log("磁碟已被移除，中止 JPEG 處理！");
+                    return;
+                }
+
+                // 讀取圖片的 EXIF 資訊
+                var directories = ImageMetadataReader.ReadMetadata(filePath);
+                var exifSubIfd = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
+                var exifIfd0 = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
+
+                // 取得相機品牌與型號
+                var cameraMake = exifIfd0?.GetDescription(ExifIfd0Directory.TagMake)?.Trim() ?? "Unknown";
+                var cameraModel = exifIfd0?.GetDescription(ExifIfd0Directory.TagModel)?.Trim() ?? "Unknown";
+
+                // **去除品牌名稱**
+                if (cameraModel.StartsWith(cameraMake, StringComparison.OrdinalIgnoreCase))
+                {
+                    cameraModel = cameraModel.Substring(cameraMake.Length).Trim();
+                }
+
+                // 取得拍攝日期
+                var dateTakenRaw = exifSubIfd?.GetDescription(ExifSubIfdDirectory.TagDateTimeOriginal);
+                var dateTaken = "Unknown";
+
+                if (DateTime.TryParseExact(dateTakenRaw, "yyyy:MM:dd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out DateTime dt))
+                {
+                    dateTaken = dt.ToString("yyyy-MM-dd");
+                }
+
+                // 更新最後處理的 JPG EXIF 資訊
+                lastJpgExifInfo = (cameraMake, cameraModel, dateTaken);
+
+                // 將檔案複製到對應的目標資料夾
+                var destination = Path.Combine(_targetRoot, cameraMake, cameraModel, dateTaken);
+                Directory.CreateDirectory(destination);
+                File.Copy(filePath, Path.Combine(destination, Path.GetFileName(filePath)), true);
+
+                Log($"分類: {filePath} -> {destination}");
+            }
+            catch (IOException)
+            {
+                Log($"錯誤: 檔案 {filePath} 無法存取，可能已移除。");
+            }
+            catch (Exception ex)
+            {
+                Log($"錯誤: {ex.Message}");
+            }
+            finally
+            {
+                UpdateProgressBar();
+            }
+        }
+
+        // 處理其他檔案（非 JPG）
+        private void ProcessOtherFile(string filePath, string driveLetter)
+        {
+            try
+            {
+                if (!Directory.Exists(driveLetter))
+                {
+                    Log("磁碟已被移除，中止其他檔案處理！");
+                    return;
+                }
+
+                // 使用最後一個處理的 JPG 的 EXIF 資訊
+                string cameraMake = lastJpgExifInfo.Make;
+                string cameraModel = lastJpgExifInfo.Model;
+                string dateTaken = lastJpgExifInfo.Date;
+
+                // 如果未處理過 JPG，則使用檔案建立日期
+                if (cameraMake == "Unknown" && cameraModel == "Unknown")
+                {
+                    dateTaken = File.GetCreationTime(filePath).ToString("yyyy-MM-dd");
+                }
+
+                // 將檔案複製到對應的目標資料夾
+                var destination = Path.Combine(_targetRoot, cameraMake, cameraModel, dateTaken);
+                Directory.CreateDirectory(destination);
+                File.Copy(filePath, Path.Combine(destination, Path.GetFileName(filePath)), true);
+
+                Log($"分類: {filePath} -> {destination}");
+            }
+            catch (IOException)
+            {
+                Log($"錯誤: 檔案 {filePath} 無法存取，可能已移除。");
+            }
+            catch (Exception ex)
+            {
+                Log($"錯誤: {ex.Message}");
+            }
+            finally
+            {
+                UpdateProgressBar();
+            }
+        }
+
+        // 更新進度條的狀態
+        private void UpdateProgressBar()
+        {
+            Interlocked.Increment(ref _processedFiles);
+
+            if (_totalFiles == 0) return;
+
+            var progress = Math.Min(100, (int)((_processedFiles / (double)_totalFiles) * 100));
+
+            // **減少 UI 更新頻率 (只更新每 10%)**
+            if (progress % 10 == 0 || progress == 100)
+            {
+                UpdateProgress(progress);
+            }
+        }
+
+        // 更新進度顯示
+        private void UpdateProgress(int percentage)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action(() =>
+                {
+                    _progressBar.Value = percentage;
+                    _progressLabel.Text = $"{_processedFiles} / {_totalFiles} 已處理";
+                }));
+            }
+            else
+            {
+                _progressBar.Value = percentage;
+                _progressLabel.Text = $"{_processedFiles} / {_totalFiles} 已處理";
+            }
+        }
+
+        // 記錄日誌並顯示
+
+        // 記錄日誌並顯示
+        private void Log(string message)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action(() =>
+                {
+                    _logBox.Items.Add(message);
+                    // 自動捲動日誌區域
+                    _logBox.SelectedIndex = _logBox.Items.Count - 1;
+                }));
+            }
+            else
+            {
+                _logBox.Items.Add(message);
+                // 自動捲動日誌區域
+                _logBox.SelectedIndex = _logBox.Items.Count - 1;
+            }
+        }
+    }
+}
