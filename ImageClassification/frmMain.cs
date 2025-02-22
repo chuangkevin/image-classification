@@ -199,7 +199,9 @@ namespace ImageClassification
                 }
 
                 // 取得拍攝日期
-                var dateTakenRaw = exifSubIfd?.GetDescription(ExifSubIfdDirectory.TagDateTimeOriginal);
+                var dateTakenRaw = exifSubIfd?.GetDescription(ExifSubIfdDirectory.TagDateTime);
+                // 可能部分機器沒有TagDateTime，用DitiTime再抓
+                dateTakenRaw = exifSubIfd?.GetDescription(ExifSubIfdDirectory.TagDateTimeDigitized);
                 var dateTaken = "Unknown";
 
                 if (DateTime.TryParseExact(dateTakenRaw, "yyyy:MM:dd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out DateTime dt))
@@ -245,8 +247,7 @@ namespace ImageClassification
                 // 使用最後一個處理的 JPG 的 EXIF 資訊
                 string cameraMake = lastJpgExifInfo.Make;
                 string cameraModel = lastJpgExifInfo.Model;
-                string dateTaken = lastJpgExifInfo.Date;
-
+                var dateTaken = File.GetCreationTime(filePath).ToString("yyyy-MM-dd");
                 // 如果未處理過 JPG，則使用檔案建立日期
                 if (cameraMake == "Unknown" && cameraModel == "Unknown")
                 {
