@@ -16,6 +16,8 @@ namespace ImageClassification
         private readonly ManualResetEventSlim _processingEvent = new(true);
         private ConfigManager _configManager = null;
 
+        //private Dictionary<string,string>  _dic
+
         private string _configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.ini");
 
         // 目標存放目錄
@@ -53,20 +55,23 @@ namespace ImageClassification
         // 開始監聽磁碟插入事件
         private void StartDriveWatcher()
         {
-            // 在背景執行緒中運行磁碟監控
             Task.Run(() =>
             {
-                // 使用 ManagementEventWatcher 監聽磁碟插入事件
-                var watcher = new ManagementEventWatcher(
-                    new WqlEventQuery("SELECT * FROM Win32_VolumeChangeEvent WHERE EventType = 2"));
-                watcher.EventArrived += new EventArrivedEventHandler(OnVolumeInserted);
-                watcher.Start();
-                Log("正在監聽磁碟機插入...");
-
-                // 保持監控持續運行直到程式結束
-                while (true)
+                while (true) // 持續監聽
                 {
-                    Thread.Sleep(100); // 避免高 CPU 使用率
+                    using (var watcher = new ManagementEventWatcher(
+                               new WqlEventQuery("SELECT * FROM Win32_VolumeChangeEvent WHERE EventType = 2")))
+                    {
+                        watcher.EventArrived += new EventArrivedEventHandler(OnVolumeInserted);
+                        watcher.Start();
+
+                        Log("正在監聽磁碟機插入...");
+
+                        // 讓監聽器持續等待事件
+                        watcher.WaitForNextEvent();
+                    }
+
+                    Thread.Sleep(500); // 避免 CPU 過載
                 }
             });
         }
