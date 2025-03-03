@@ -101,20 +101,6 @@ namespace ImageClassification
             Task.Factory.StartNew(() => ProcessDrive(driveLetter), TaskCreationOptions.LongRunning);
         }
 
-        // 開啟指定資料夾
-        private void OpenFolder(string folderPath)
-        {
-            try
-            {
-                // 使用 explorer 開啟指定資料夾
-                System.Diagnostics.Process.Start("explorer.exe", folderPath);
-            }
-            catch (Exception ex)
-            {
-                Log($"無法開啟資料夾: {ex.Message}");
-            }
-        }
-
         // 處理偵測到的磁碟
         private async void ProcessDrive(string driveLetter)
         {
@@ -122,47 +108,20 @@ namespace ImageClassification
             if (!Directory.Exists(dcimPath))
             {
                 Log("未找到 DCIM 資料夾，跳過。");
-                _processingEvent.Set(); // 允許下一次偵測
-                return;
-            }
-
-            // **確保磁碟仍然存在**
-            if (!Directory.Exists(driveLetter))
-            {
-                Log("磁碟已被移除，停止處理。");
                 _processingEvent.Set();
                 return;
             }
 
-            // 取得所有檔案並根據副檔名排序
-            var files = Directory.GetFiles(dcimPath, "*.*", SearchOption.AllDirectories)
-                                 .OrderBy(f => Path.GetExtension(f).ToLower())  // 根據檔案副檔名排序
-                                 .ToList();
-
+            var files = Directory.GetFiles(dcimPath, "*.*", SearchOption.AllDirectories).ToList();
             _totalFiles = files.Count;
             _processedFiles = 0;
+            UpdateProgress(0);
 
-            UpdateProgress(0); // 初始化進度條
-
-            // 開始處理檔案時將進度更新轉交到UI執行緒
-            var tasks = new List<Task>();
-            foreach (var file in files)
-            {
-                if (!Directory.Exists(driveLetter))
-                {
-                    Log("磁碟已被移除，中止處理！");
-                    _processingEvent.Set();
-                    return;
-                }
-
-                tasks.Add(file.ToLower().EndsWith(".jpg") ?
-                              Task.Run(() => ProcessJpeg(file, driveLetter)) :
-                              Task.Run(() => ProcessOtherFile(file, driveLetter)));
-            }
+            var tasks = files.Select(file => Task.Run(() => ProcessFile(file, driveLetter))).ToList();
 
             try
             {
-                await Task.WhenAll(tasks).ConfigureAwait(false); // 使用 ConfigureAwait(false) 防止回到 UI 執行緒
+                await Task.WhenAll(tasks).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -171,9 +130,58 @@ namespace ImageClassification
             finally
             {
                 Log("所有檔案處理完成！");
-                UpdateProgress(100); // 進度條填滿
-                OpenFolder(_targetRoot); // 開啟目標資料夾
-                _processingEvent.Set(); // 允許下一次偵測
+                UpdateProgress(100);
+                OpenFolder(_targetRoot);
+                _processingEvent.Set();
+            }
+        }
+
+        private void ProcessFile(string filePath, string driveLetter)
+        {
+            if (filePath.ToLower().EndsWith(".jpg"))
+            {
+                ProcessJpeg(filePath, driveLetter);
+            }
+            else
+            {
+                if (!ProcessRaw(filePath, driveLetter))
+                {
+                    ProcessOtherFile(filePath, driveLetter);
+                }
+            }
+        }
+
+        private bool ProcessRaw(string filePath, string driveLetter)
+        {
+            try
+            {
+                var directories = ImageMetadataReader.ReadMetadata(filePath);
+                var exifIfd0 = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
+                var exifSubIfd = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
+
+                var cameraMake = exifIfd0?.GetDescription(ExifIfd0Directory.TagMake)?.Trim() ?? "Unknown";
+                var cameraModel = exifIfd0?.GetDescription(ExifIfd0Directory.TagModel)?.Trim() ?? "Unknown";
+                if (cameraModel.StartsWith(cameraMake, StringComparison.OrdinalIgnoreCase))
+                {
+                    cameraModel = cameraModel.Substring(cameraMake.Length).Trim();
+                }
+
+                var dateTakenRaw = exifSubIfd?.GetDescription(ExifSubIfdDirectory.TagDateTime);
+                var dateTaken = "Unknown";
+                if (DateTime.TryParseExact(dateTakenRaw, "yyyy:MM:dd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out DateTime dt))
+                {
+                    dateTaken = dt.ToString("yyyy-MM-dd");
+                }
+
+                var destination = Path.Combine(_targetRoot, cameraMake, cameraModel, dateTaken);
+                Directory.CreateDirectory(destination);
+                File.Copy(filePath, Path.Combine(destination, Path.GetFileName(filePath)), true);
+                Log($"分類 RAW: {filePath} -> {destination}");
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -277,6 +285,20 @@ namespace ImageClassification
             finally
             {
                 UpdateProgressBar();
+            }
+        }
+
+        // 開啟指定資料夾
+        private void OpenFolder(string folderPath)
+        {
+            try
+            {
+                // 使用 explorer 開啟指定資料夾
+                System.Diagnostics.Process.Start("explorer.exe", folderPath);
+            }
+            catch (Exception ex)
+            {
+                Log($"無法開啟資料夾: {ex.Message}");
             }
         }
 
