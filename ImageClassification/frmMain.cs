@@ -157,7 +157,6 @@ namespace ImageClassification
             {
                 var directories = ImageMetadataReader.ReadMetadata(filePath);
                 var exifIfd0 = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
-                var exifSubIfd = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
 
                 var cameraMake = exifIfd0?.GetDescription(ExifIfd0Directory.TagMake)?.Trim() ?? "Unknown";
                 var cameraModel = exifIfd0?.GetDescription(ExifIfd0Directory.TagModel)?.Trim() ?? "Unknown";
@@ -166,7 +165,7 @@ namespace ImageClassification
                     cameraModel = cameraModel.Substring(cameraMake.Length).Trim();
                 }
 
-                var dateTakenRaw = exifSubIfd?.GetDescription(ExifSubIfdDirectory.TagDateTime);
+                var dateTakenRaw = exifIfd0?.GetDescription(ExifIfd0Directory.TagDateTime);
                 var dateTaken = "Unknown";
                 if (DateTime.TryParseExact(dateTakenRaw, "yyyy:MM:dd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out DateTime dt))
                 {
