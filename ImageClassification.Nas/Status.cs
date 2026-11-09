@@ -24,7 +24,28 @@ public sealed class Status
     private DateTime? _backupNextRetry;
 
     private string[] _paused = Array.Empty<string>();
-    private readonly LinkedList<object> _history = new();
+    private readonly LinkedList<System.Text.Json.Nodes.JsonNode> _history = new();
+    private string? _historyFile;
+
+    /// <summary>從檔案載入歷史紀錄，之後每張卡完成都寫回，服務重啟不會清空。</summary>
+    public void LoadHistory(string file)
+    {
+        lock (_gate)
+        {
+            _historyFile = file;
+            try
+            {
+                if (!File.Exists(file)) return;
+                var arr = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))?.AsArray();
+                if (arr is null) return;
+                foreach (var n in arr) if (n is not null) _history.AddLast(n.DeepClone());
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"讀取歷史紀錄失敗: {ex.Message}");
+            }
+        }
+    }
 
     public void CardScanning(string card)
     {
@@ -61,7 +82,7 @@ public sealed class Status
     {
         lock (_gate)
         {
-            _history.AddFirst(new
+            _history.AddFirst(System.Text.Json.JsonSerializer.SerializeToNode(new
             {
                 at = DateTime.Now,
                 card = _card,
@@ -73,8 +94,21 @@ public sealed class Status
                 failed = _failed,
                 mb = Math.Round(_copiedBytes / 1048576.0),
                 minutes = _cardStarted is null ? 0 : Math.Round((DateTime.Now - _cardStarted.Value).TotalMinutes, 1),
-            });
+            })!);
             while (_history.Count > 30) _history.RemoveLast();
+            if (_historyFile is not null)
+            {
+                try
+                {
+                    var arr = new System.Text.Json.Nodes.JsonArray(_history.Select(n => (System.Text.Json.Nodes.JsonNode?)n.DeepClone()).ToArray());
+                    File.WriteAllText(_historyFile + ".tmp", arr.ToJsonString());
+                    File.Move(_historyFile + ".tmp", _historyFile, true);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn($"寫入歷史紀錄失敗: {ex.Message}");
+                }
+            }
             _state = "idle"; _card = null; _currentFile = null;
         }
     }
@@ -126,7 +160,7 @@ public sealed class Status
                     finished = _backupFinished, failing = _backupFailing, nextRetry = _backupNextRetry,
                 },
                 paused = _paused,
-                history = _history.ToArray(),
+                history = new System.Text.Json.Nodes.JsonArray(_history.Select(n => (System.Text.Json.Nodes.JsonNode?)n.DeepClone()).ToArray()),
                 log = Log.Recent(),
             };
         }

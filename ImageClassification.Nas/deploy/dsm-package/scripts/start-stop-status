@@ -1,0 +1,3 @@
+#!/bin/sh
+# 只有 DSM 選單捷徑，沒有要啟動的程式
+case "$1" in status) exit 0;; *) exit 0;; esac

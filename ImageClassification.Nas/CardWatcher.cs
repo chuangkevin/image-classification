@@ -22,6 +22,7 @@ public sealed class CardWatcher
         _notifier = new Notifier(settings);
         _backup = new Backup(settings, _notifier);
         _pause = new PreviewPause(settings, appDir);
+        Status.Instance.LoadHistory(Path.Combine(appDir, "history.json"));
         _mounter = new AutoMounter(msg => _notifier.Send(msg));
         _mountPattern = GlobToRegex(settings.MountGlob);
     }

@@ -57,6 +57,16 @@ public static class WebUi
                 body = Encoding.UTF8.GetBytes(Page);
                 ctx.Response.ContentType = "text/html; charset=utf-8";
             }
+            else if (path == "/manifest.webmanifest")
+            {
+                body = Encoding.UTF8.GetBytes(Manifest);
+                ctx.Response.ContentType = "application/manifest+json; charset=utf-8";
+            }
+            else if (Icon(path) is { } png)
+            {
+                body = png;
+                ctx.Response.ContentType = "image/png";
+            }
             else
             {
                 ctx.Response.StatusCode = 404;
@@ -75,19 +85,67 @@ public static class WebUi
         }
     }
 
+    private static readonly Dictionary<string, byte[]> Icons = new();
+
+    /// <summary>內嵌的 App 圖示：/icon-192.png、/icon-512.png、/apple-touch-icon.png。</summary>
+    private static byte[]? Icon(string path)
+    {
+        var name = path switch
+        {
+            "/icon-192.png" => "icon-192.png",
+            "/icon-512.png" => "icon-512.png",
+            "/apple-touch-icon.png" or "/favicon.ico" => "icon-180.png",
+            _ => null,
+        };
+        if (name is null) return null;
+        lock (Icons)
+        {
+            if (Icons.TryGetValue(name, out var cached)) return cached;
+            using var s = typeof(WebUi).Assembly.GetManifestResourceStream(name);
+            if (s is null) return null;
+            using var ms = new MemoryStream();
+            s.CopyTo(ms);
+            return Icons[name] = ms.ToArray();
+        }
+    }
+
+    private const string Manifest = """
+{
+  "name": "記憶卡匯入",
+  "short_name": "記憶卡匯入",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
+""";
+
     private const string Page = """
 <!doctype html>
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>記憶卡匯入</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="記憶卡匯入">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#2563eb">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#6b7280;--line:#e5e7eb;--accent:#2563eb;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--bar:#e8edf5}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e6e8ec;--muted:#9aa1ad;--line:#262b35;--accent:#60a5fa;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--bar:#232833}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
-main{max-width:860px;margin:0 auto;padding:20px 16px 40px}
+main{max-width:860px;margin:0 auto;padding:calc(20px + env(safe-area-inset-top)) 16px calc(40px + env(safe-area-inset-bottom))}
 header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:16px}
 h1{font-size:20px;margin:0;font-weight:600}
 .sub{color:var(--muted);font-size:13px}
@@ -103,7 +161,7 @@ h2{font-size:13px;font-weight:600;color:var(--muted);margin:0 0 10px;letter-spac
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:500}
-td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+th.n,td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .scroll{overflow-x:auto}
 pre{margin:0;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--muted);max-height:260px;overflow:auto}
 .cur{color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -172,7 +230,7 @@ async function tick() {
   $("cEta").textContent = c.etaSeconds != null ? dur(c.etaSeconds) : "—";
 
   const b = s.backup;
-  if (b.busy) { $("bTitle").innerHTML = `傳送中 <span class="pill">已 ${since(b.started)}</span>`; $("bSub").textContent = b.plan || "比對檔案清單中"; }
+  if (b.busy) { $("bTitle").innerHTML = `傳送中 <span class="pill">已 ${since(b.started)}</span>`; $("bSub").textContent = b.plan ? (b.last && b.last !== b.plan ? `${b.plan}　${b.last}` : b.plan) : "比對檔案清單中"; }
   else if (b.failing) { $("bTitle").innerHTML = `<span class="warn">上次失敗</span>，${t(b.nextRetry)} 重試`; $("bSub").textContent = b.last || ""; }
   else if (b.finished) { $("bTitle").innerHTML = `<span class="ok">已同步</span> <span class="pill">${t(b.finished)}</span>`; $("bSub").textContent = b.last || ""; }
   else { $("bTitle").textContent = "尚未執行"; $("bSub").textContent = ""; }

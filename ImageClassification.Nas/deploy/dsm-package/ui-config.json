@@ -1,0 +1,16 @@
+{
+  ".url": {
+    "com.sdimport.status": {
+      "type": "url",
+      "title": "記憶卡匯入",
+      "desc": "插卡自動匯入的進度",
+      "icon": "images/sdimport_{0}.png",
+      "protocol": "http",
+      "port": "8390",
+      "url": "/",
+      "allUsers": false,
+      "grantPrivilege": "local",
+      "advanceGrantPrivilege": true
+    }
+  }
+}

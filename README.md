@@ -12,7 +12,7 @@ Auto detect storage and classify.
 
 插卡後的流程：
 
-1. DSM 把卡掛到 `/volumeUSB{n}/usbshare`。服務每 5 秒檢查一次，看到 `DCIM` 就開始。同一張卡拔掉前只處理一次。
+1. 服務每 5 秒檢查一次讀卡機。DSM 只在讀卡機插上 USB 時才掛載卡片，換卡不會，所以有新卡沒被掛載時由服務呼叫 `synousbdisk -mount`。卡片以檔案系統的磁碟區序號辨識，退出後還留在讀卡機裡的同一張卡不會被重掛。看到 `DCIM` 就開始。exFAT 卡需要 DSM 的 exFAT Access 套件。
 2. 暫停 `PausePackages`（預設 Synology Photos），匯入時不跟縮圖、人臉辨識搶硬碟。原本就關著的不會被打開。
 3. Telegram 通知「開始匯入 N 個檔案，請先不要拔卡」。
 4. 複製到 `{OutputPath}/{品牌}/{型號}/{yyyy-MM-dd}/`。
@@ -30,6 +30,12 @@ Auto detect storage and classify.
 - **影片歸類**：影片沒有相機資訊時，沿用同檔名照片，否則沿用前一張照片的相機。
 - **可選刪卡**：`DeleteAfterCopy = true` 時，SHA-256 驗證兩邊一致才刪卡上原檔。預設關閉。
 
+### 看進度
+
+- **進度網頁**：`http://<NAS>:8390`，每秒更新目前的卡、速度、剩餘時間、背景備援、最近處理的卡與日誌。歷史存在 `history.json`，服務重啟不會清空。
+- **DSM 主選單圖示**：`deploy/build-spk.sh` 打包 `SdImport.spk`，以 root 執行 `synopkg install SdImport.spk` 後，DSM 主選單會多一個「記憶卡匯入」，點了開進度網頁。套件只有捷徑，不含服務本身。
+- **手機 App**：進度網頁支援「加入主畫面」。iPhone Safari 會變成全螢幕獨立 App；Android Chrome 在 http 下只會建立捷徑，要完整安裝需要 https。
+
 ### 通知
 
 Telegram bot。token 與 chat id 在每次發送時從 `TelegramEnvFile` 讀取（`TELEGRAM_BOT_TOKEN`、`TELEGRAM_HOME_CHANNEL`），不另存副本。DSM 7 的 `synodsmnotify` 標題與內容都只接受內建 i18n 字串，送不了自訂文字，所以不用它。
@@ -39,9 +45,10 @@ Telegram bot。token 與 chat id 在每次發送時從 `TelegramEnvFile` 讀取�
 `deploy/backup-push.sh` 把匯入結果推到另一台機器。目的地主機、帳號、路徑放在 NAS 上的 `backup.env`，範例見 `deploy/backup.env.example`，不進版控。
 
 - **背景執行**：匯入完成只送出請求，不擋下一張卡。執行中又有新請求，跑完會再補一輪。
-- **只新增**：比對兩邊檔案清單，只傳目的地沒有的檔案。不覆蓋、不刪除。
+- **只新增**：比對兩邊的「路徑＋大小」，只傳目的地沒有的檔案。不覆蓋、不刪除。同名但大小不同的只寫進日誌，不自動處理。
+- **分批**：每 `BACKUP_BATCH`（預設 100）個檔案一批，每批附上「路徑＋大小」清單；目的地只搬清單上、大小完全相符的檔案。中斷最多損失一批。
 - **不用 rsync**：DSM 目的地要開「rsync 服務」才允許 rsync over SSH，會改系統設定並開 873 埠。改用 tar 串流。
-- **斷線安全**：先收進目的地的暫存資料夾 `.sd-import-incoming`，全部收完才搬到正式位置。中斷時下次執行先清掉暫存再重傳。
+- **斷線安全**：每批先收進目的地的暫存資料夾 `.sd-import-incoming.*`，收完才搬到正式位置。下次執行先清掉中斷留下的暫存。`flock` 保證同時只跑一份。
 - **重試**：失敗每 `BackupRetryMinutes` 分鐘重試，第一次失敗與補完各通知一次。服務啟動時也會先補跑一次。
 - **金鑰**：建議用專用金鑰，目的地 `authorized_keys` 以 `from=` 限定來源並加 `no-pty`。
 
