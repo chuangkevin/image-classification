@@ -1,0 +1,22 @@
+[Settings]
+; 分類輸出根目錄：{OutputPath}/{品牌}/{型號}/{yyyy-MM-dd}/
+OutputPath = /volume1/photo/ImageClassification
+; DSM 把 USB 讀卡機掛在 /volumeUSB{n}/usbshare 或 usbshare{n}
+MountGlob = /volumeUSB*/usbshare*
+ScanIntervalSeconds = 5
+; true = 複製並 SHA-256 驗證一致後刪除卡上原檔
+DeleteAfterCopy = false
+; 完成且無失敗時自動退出卡片
+EjectWhenDone = true
+; Telegram 通知（DSM 7 的 synodsmnotify 不收自訂文字）
+Notify = true
+; 含 TELEGRAM_BOT_TOKEN、TELEGRAM_HOME_CHANNEL 的 env 檔，每次發送時讀取（留空＝不通知）
+TelegramEnvFile = /volume1/docker/image-classification/telegram.env
+LogPath = /volume1/docker/image-classification/logs/sd-import.log
+; 匯入後在背景執行的備援腳本（留空＝不備援），失敗每 BackupRetryMinutes 分鐘重試
+; backup-push.sh 讀 backup.env，範例見 backup.env.example
+BackupScript = /volume1/docker/image-classification/src/ImageClassification.Nas/deploy/backup-push.sh
+BackupRetryMinutes = 60
+; 匯入期間暫停的 DSM 套件（逗號分隔，留空＝不暫停），閒置 ResumeAfterIdleMinutes 分鐘後恢復
+PausePackages = SynologyPhotos
+ResumeAfterIdleMinutes = 10

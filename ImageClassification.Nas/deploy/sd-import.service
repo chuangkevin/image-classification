@@ -1,0 +1,18 @@
+[Unit]
+Description=SD card auto import (ImageClassification.Nas)
+After=syno-volume.target network-online.target
+Wants=syno-volume.target
+
+[Service]
+Type=simple
+ExecStart=/volume1/docker/image-classification/bin/sd-import run --config /volume1/docker/image-classification/sd-import.ini
+WorkingDirectory=/volume1/docker/image-classification
+Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/volume1/docker/image-classification/.dotnet-bundle
+Restart=always
+RestartSec=10
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target
