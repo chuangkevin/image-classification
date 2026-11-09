@@ -26,6 +26,12 @@ public sealed class Settings
     public string PausePackages { get; init; } = "SynologyPhotos";
     /// <summary>最後一張卡處理完後閒置幾分鐘才恢復暫停的套件。</summary>
     public int ResumeAfterIdleMinutes { get; init; } = 10;
+    /// <summary>
+    /// 匯入後讓 Synology Photos 登錄新檔的指令（空白＝不登錄）。直接寫檔不會觸發 DSM 的檔案事件，
+    /// 不跑這個 Photos 看不到新照片、也不會做縮圖。{0} 會換成 OutputPath。
+    /// </summary>
+    public string PhotosIndexCommand { get; init; } =
+        "/var/packages/SynologyPhotos/target/usr/bin/synofoto-bin-index-tool -t basic -i {0}";
     /// <summary>進度網頁的 HttpListener prefix（空白＝不開）。</summary>
     public string WebPrefix { get; init; } = "http://*:8390/";
 
@@ -50,6 +56,7 @@ public sealed class Settings
             s["PausePackages"] = d.PausePackages;
             s["ResumeAfterIdleMinutes"] = d.ResumeAfterIdleMinutes.ToString();
             s["WebPrefix"] = d.WebPrefix;
+            s["PhotosIndexCommand"] = d.PhotosIndexCommand;
             parser.WriteFile(path, data);
             return d;
         }
@@ -78,6 +85,7 @@ public sealed class Settings
             PausePackages = ini["PausePackages"] is { } pp ? pp.Trim() : def.PausePackages,
             ResumeAfterIdleMinutes = int.TryParse(ini["ResumeAfterIdleMinutes"], out var r) && r > 0 ? r : def.ResumeAfterIdleMinutes,
             WebPrefix = ini["WebPrefix"] is { } wp ? wp.Trim() : def.WebPrefix,
+            PhotosIndexCommand = ini["PhotosIndexCommand"] is { } pic ? pic.Trim() : def.PhotosIndexCommand,
         };
     }
 }

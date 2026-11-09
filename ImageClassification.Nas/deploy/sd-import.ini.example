@@ -20,3 +20,6 @@ BackupRetryMinutes = 60
 ; 匯入期間暫停的 DSM 套件（逗號分隔，留空＝不暫停），閒置 ResumeAfterIdleMinutes 分鐘後恢復
 PausePackages = SynologyPhotos
 ResumeAfterIdleMinutes = 10
+; 匯入後讓 Synology Photos 登錄新檔（直接寫檔不會觸發 DSM 檔案事件，不登錄就看不到、也不做縮圖）
+; {0} 換成 OutputPath；留空＝不登錄。Photos 被暫停時，會等恢復後再登錄。
+PhotosIndexCommand = /var/packages/SynologyPhotos/target/usr/bin/synofoto-bin-index-tool -t basic -i {0}

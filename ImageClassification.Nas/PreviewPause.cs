@@ -46,12 +46,47 @@ public sealed class PreviewPause
         }
     }
 
-    public void AfterImport() => _lastActivity = DateTime.Now;
+    /// <summary>
+    /// 匯入完成後呼叫。Photos 沒被我們暫停（本來就開著）就立刻登錄新檔；
+    /// 被暫停的話，等 ResumeIfIdle 恢復後再一次登錄。
+    /// </summary>
+    public void AfterImport(bool copiedAny)
+    {
+        _lastActivity = DateTime.Now;
+        if (copiedAny) _indexPending = true;
+        if (_pausedByUs.Count == 0) IndexIfPending();
+    }
+
+    private bool _indexPending;
+
+    private void IndexIfPending()
+    {
+        if (!_indexPending || string.IsNullOrWhiteSpace(_settings.PhotosIndexCommand)) return;
+        var parts = string.Format(_settings.PhotosIndexCommand, _settings.OutputPath)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (!File.Exists(parts[0])) { _indexPending = false; return; }
+        if (File.Exists(SynoPkg) && Run("is_onoff", "SynologyPhotos") != 0) return; // Photos 沒開，等開了再登錄
+        try
+        {
+            var psi = new ProcessStartInfo(parts[0]) { RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var a in parts.Skip(1)) psi.ArgumentList.Add(a);
+            using var p = Process.Start(psi)!;
+            p.StandardOutput.ReadToEnd();
+            p.StandardError.ReadToEnd();
+            if (!p.WaitForExit(600_000)) { p.Kill(); Log.Warn("Photos 登錄新檔逾時"); return; }
+            Log.Info(p.ExitCode == 0 ? "已通知 Synology Photos 登錄新照片（之後在背景做縮圖）" : $"Photos 登錄新檔回傳 {p.ExitCode}");
+            _indexPending = p.ExitCode != 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Photos 登錄新檔失敗: {ex.Message}");
+        }
+    }
 
     /// <summary>監看迴圈每輪呼叫：閒置夠久就恢復。</summary>
     public void ResumeIfIdle()
     {
-        if (_pausedByUs.Count == 0) return;
+        if (_pausedByUs.Count == 0) { if (_indexPending && DateTime.Now - _lastActivity > TimeSpan.FromMinutes(1)) IndexIfPending(); return; }
         if (DateTime.Now - _lastActivity < TimeSpan.FromMinutes(_settings.ResumeAfterIdleMinutes)) return;
         foreach (var pkg in _pausedByUs.ToList())
         {
@@ -59,6 +94,7 @@ public sealed class PreviewPause
             if (Run("start", pkg) == 0) _pausedByUs.Remove(pkg);
         }
         Save();
+        if (_pausedByUs.Count == 0) IndexIfPending();
         // 啟動失敗就等下一個閒置週期再試，不要每 5 秒狂打。
         _lastActivity = DateTime.Now;
     }

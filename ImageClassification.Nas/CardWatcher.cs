@@ -68,14 +68,16 @@ public sealed class CardWatcher
                 continue;
             }
             _pause.BeforeImport();
-            try { HandleCard(m, ct); }
-            finally { _pause.AfterImport(); }
+            var copied = false;
+            try { copied = HandleCard(m, ct); }
+            finally { _pause.AfterImport(copied); }
         }
 
         _pause.ResumeIfIdle();
     }
 
-    private void HandleCard(Mount m, CancellationToken ct)
+    /// <summary>回傳是否有新複製的檔案。</summary>
+    private bool HandleCard(Mount m, CancellationToken ct)
     {
         var label = $"{m.MountPoint}（{m.Device}）";
         Log.Info($"偵測到記憶卡 {label}");
@@ -94,7 +96,7 @@ public sealed class CardWatcher
             Log.Error($"{label} 匯入失敗: {ex}");
             Status.Instance.CardFinished("失敗：" + ex.Message, false);
             _notifier.Send($"❌ 記憶卡匯入失敗：{ex.Message}");
-            return;
+            return false;
         }
 
         var secs = Math.Max(1, (DateTime.Now - started).TotalSeconds);
@@ -120,6 +122,7 @@ public sealed class CardWatcher
 
         // 備援丟到背景：馬上可以插下一張卡。中止的也要備援已複製的部分。
         if (r.Copied > 0) _backup.Request();
+        return r.Copied > 0;
     }
 
     public sealed record Mount(string Device, string MountPoint)

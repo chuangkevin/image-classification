@@ -5,7 +5,7 @@
 # 不用 rsync：DSM 目的地要開「rsync 服務」才允許 rsync over SSH，那會改系統設定
 # 並開 873 埠。改成「比對清單 → tar 串流缺的檔案」：
 #   1. 列出本機檔案，與目的地同名資料夾底下的檔案比對，只挑目的地沒有的
-#   2. 每 BACKUP_BATCH 個檔案一批，連同「路徑＋大小」清單 tar 串流到目的地的暫存資料夾
+#   2. 每 BACKUP_BATCH 個檔案一批，連同「路徑＋大小」清單 tar 串流到目的地帳號家目錄下的暫存資料夾
 #   3. 目的地只搬清單上、而且大小完全相符的檔案；已有同路徑檔案就不動（不覆蓋、不刪除）
 # 中斷只會留下暫存資料夾，下次執行先清掉；正式資料夾不會有半個檔案。
 # 同路徑但大小不同的檔案只列在日誌（stderr），不自動處理。
@@ -86,8 +86,10 @@ for b in "$TMP"/batch.*; do
   res=$(tar -cf - --mode='u+rwX,go+rX' -C "$TMP" sd-import-manifest --no-recursion -C "$SRC" -T "$TMP/paths" | $R "
     set -e
     cd \"$DEST_DIR\"
-    rm -rf .sd-import-incoming .sd-import-incoming.*
-    STG=.sd-import-incoming.$RUN
+    # 暫存放在目的地帳號的家目錄（同一個磁碟區，mv 一樣瞬間），不放在照片資料夾裡：
+    # 目的地的 Synology Photos 會監看照片資料夾，在暫存區建 @eaDir 縮圖，清理時撞上就失敗。
+    rm -rf \"\$HOME\"/.sd-import-incoming.* .sd-import-incoming .sd-import-incoming.* 2>/dev/null || true
+    STG=\"\$HOME/.sd-import-incoming.$RUN\"
     mkdir \"\$STG\"
     tar -xf - -C \"\$STG\"
     moved=0; kept=0; bad=0
@@ -98,7 +100,7 @@ for b in "$TMP"/batch.*; do
       mv \"\$STG/\$f\" \"\$f\"
       moved=\$((moved+1))
     done < \"\$STG/sd-import-manifest\"
-    rm -rf \"\$STG\"
+    rm -rf \"\$STG\" 2>/dev/null || true
     echo \"\$moved \$kept \$bad\"
   ")
   set -- $res

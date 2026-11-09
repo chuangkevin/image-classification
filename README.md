@@ -19,6 +19,7 @@ Auto detect storage and classify.
 5. 全部成功才自動退出卡片，Telegram 通知結果與「可以拔卡」。
 6. 備援丟到背景執行，可以馬上插下一張卡。
 7. 最後一張卡處理完、閒置 `ResumeAfterIdleMinutes` 分鐘（預設 10）沒有新卡，才恢復暫停的套件。連續換卡不會反覆開關。
+8. 通知 Synology Photos 登錄新照片（`PhotosIndexCommand`）。服務直接寫檔不會觸發 DSM 的檔案事件，不登錄的話 Photos 看不到新照片、也不會做縮圖。
 
 和 Windows 版的差異：
 
